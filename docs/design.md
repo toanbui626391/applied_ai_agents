@@ -22,19 +22,23 @@ When a homeowner's property is damaged (e.g., fire, flood, storm) and becomes un
 
 ```mermaid
 flowchart TD
-    A["1. Damage Event: Property becomes uninhabitable"] --> B["2. Insured files Loss of Use claim"]
-    B --> C["3. Adjuster validates claim & reviews policy PDF"]
-    C --> D["4. Adjuster extracts ALE limits, daily caps & LKQ constraints"]
-    D --> E["5. Adjuster assigns Relocation Vendor"]
-    E --> F["6. Vendor interviews insured for specific needs"]
-    F --> G["7. Vendor searches across multiple platforms"]
-    G --> H["8. Vendor filters & shortlists properties"]
-    H --> I["9. Vendor presents options to insured"]
-    I --> J{Insured Approves?}
+    classDef user fill:#4A90D9,stroke:#2C6FAC,color:#FFFFFF
+    classDef external fill:#9B59B6,stroke:#8E44AD,color:#FFFFFF
+    classDef decision fill:#E74C3C,stroke:#C0392B,color:#FFFFFF
+
+    A["1. Damage Event: Property becomes uninhabitable"]:::external --> B["2. Insured files Loss of Use claim"]:::user
+    B --> C["3. Adjuster validates claim & reviews policy PDF"]:::user
+    C --> D["4. Adjuster extracts ALE limits, daily caps & LKQ constraints"]:::user
+    D --> E["5. Adjuster assigns Relocation Vendor"]:::user
+    E --> F["6. Vendor interviews insured for specific needs"]:::user
+    F --> G["7. Vendor searches across multiple platforms"]:::user
+    G --> H["8. Vendor filters & shortlists properties"]:::user
+    H --> I["9. Vendor presents options to insured"]:::user
+    I --> J{Insured Approves?}:::decision
     J -- No --> G
-    J -- Yes --> K["10. Adjuster reviews & authorizes booking"]
-    K --> L["11. Vendor books accommodation"]
-    L --> M["12. Ongoing: Monitor duration, extensions, budget compliance"]
+    J -- Yes --> K["10. Adjuster reviews & authorizes booking"]:::user
+    K --> L["11. Vendor books accommodation"]:::user
+    L --> M["12. Ongoing: Monitor duration, extensions, budget compliance"]:::user
 ```
 
 **Process Steps Explained:**
@@ -65,56 +69,267 @@ flowchart TD
 
 To automate and optimize this workflow, we propose a Multi-Agent System built natively on the Databricks Data Intelligence Platform. Databricks provides the necessary tools for secure data governance (Unity Catalog), vector storage, and agent serving (Mosaic AI Agent Framework).
 
+### Pain Point to Agent Capability Mapping
+
+Each pain point from Section 1 maps to a specific AI agent capability:
+
+| Pain Point | AI Capability | Responsible Agent |
+| :--- | :--- | :--- |
+| Manual Policy Parsing | RAG — retrieve and extract from unstructured PDFs | Policy Analyzer Agent |
+| Slow Turnaround | Parallel execution — all agents work simultaneously | Matching Orchestrator |
+| Fragmented Search | Tool calling — query multiple APIs in parallel | Property Broker Agent |
+| Suboptimal Matching | Scoring algorithm — deterministic rank by cost and fit | Matching Orchestrator |
+| Poor Ongoing Tracking | Automated monitoring — scheduled budget/duration checks | Compliance Monitor (future) |
+| High Vendor Costs | End-to-end automation — reduces vendor dependency | All Agents |
+
 ### Proposed Agentic Workflow
 
 ```mermaid
 sequenceDiagram
-    participant User as Insured Person
-    participant Orchestrator as Matching Orchestrator Agent
-    participant Analyzer as Policy Analyzer Agent (RAG)
-    participant Intake as Needs Intake Agent
-    participant Broker as Property Broker Agent
-    participant UC as Unity Catalog / Vector DB
+    box rgb(74, 144, 217) Human Actors
+        participant Insured as Insured Person
+        participant Adjuster as Claims Adjuster
+    end
+    box rgb(46, 204, 113) AI Agents
+        participant Orchestrator as Matching Orchestrator
+        participant Analyzer as Policy Analyzer Agent
+        participant Intake as Needs Intake Agent
+        participant Broker as Property Broker Agent
+    end
+    box rgb(243, 156, 18) Data Layer
+        participant UC as Unity Catalog
+    end
+    box rgb(155, 89, 182) External APIs
+        participant ExtAPI as External APIs
+    end
 
-    User->>Orchestrator: Initiates Claim Chat
-    Orchestrator->>Analyzer: Request Policy Limits
-    Analyzer->>UC: Search Policy PDFs
-    Analyzer-->>Orchestrator: Returns Limits (Daily Max, LKQ)
-    
-    Orchestrator->>Intake: Trigger Needs Assessment
-    Intake->>User: "What are your specific needs? (Pets, kids, etc.)"
-    User-->>Intake: "3 beds, dog friendly, near downtown"
-    Intake-->>Orchestrator: Structured Needs JSON
-    
-    Orchestrator->>Broker: Find Properties (Needs + Limits)
-    Broker->>UC: Query internal inventory feeds
-    Broker-->>Orchestrator: Raw Property List
-    
-    Orchestrator->>Orchestrator: Score & Filter Properties
-    Orchestrator->>User: Present Top 3 Matches
+    Insured->>Adjuster: Files Loss of Use claim
+    Adjuster->>Orchestrator: Initiates matching (Policy ID, Claim ID)
+
+    par Policy Analysis
+        Orchestrator->>Analyzer: Extract policy constraints
+        Analyzer->>UC: Vector Search on policy PDF chunks
+        UC-->>Analyzer: Relevant policy clauses
+        Analyzer-->>Orchestrator: Structured constraints (ALE limit, daily cap, LKQ)
+    and Needs Assessment
+        Orchestrator->>Intake: Gather insured needs
+        Intake->>Insured: "Tell us about your housing needs"
+        Insured-->>Intake: "3 beds, dog friendly, near Lincoln High"
+        Intake-->>Orchestrator: Structured needs JSON
+    end
+
+    Orchestrator->>Broker: Search properties (constraints + needs)
+    par Internal Search
+        Broker->>UC: Query inventory Delta tables
+        UC-->>Broker: Internal property results
+    and External Search
+        Broker->>ExtAPI: Query Airbnb, Hotels, Corporate Housing
+        ExtAPI-->>Broker: External property results
+    end
+    Broker-->>Orchestrator: Combined raw property list
+
+    Orchestrator->>Orchestrator: Filter hard constraints, score and rank
+    Orchestrator->>Adjuster: Present top 3 matches for authorization
+    Adjuster->>Insured: Present approved options
+    Insured-->>Adjuster: Selects preferred option
+    Adjuster->>Orchestrator: Confirm booking
 ```
+
+**Key design decisions in this workflow:**
+1. **Human-in-the-loop**: The Claims Adjuster remains in the loop for authorization. The agents assist, but do not autonomously book accommodation.
+2. **Parallel execution**: Policy analysis and needs intake happen concurrently (`par` block) to reduce turnaround time.
+3. **Internal + External search**: The Broker queries both Unity Catalog inventory tables and external APIs in parallel.
 
 ---
 
 ## 3. Solution Architecture Design
 
-### System Components
+### System Architecture
 
-1. **Policy Analyzer Agent (Information Retrieval)**
-   * **Role**: Parses the insured's policy document to extract strict financial limits and constraints.
-   * **Tech Stack**: Databricks Vector Search, Mosaic AI Model Serving.
+```mermaid
+graph TD
+    classDef user fill:#4A90D9,stroke:#2C6FAC,color:#FFFFFF
+    classDef agent fill:#2ECC71,stroke:#27AE60,color:#FFFFFF
+    classDef datastore fill:#F39C12,stroke:#E67E22,color:#FFFFFF
+    classDef external fill:#9B59B6,stroke:#8E44AD,color:#FFFFFF
+    classDef monitoring fill:#95A5A6,stroke:#7F8C8D,color:#FFFFFF
 
-2. **Needs Intake Agent (Conversational)**
-   * **Role**: Acts empathetically to interview the insured and extract structured requirements (number of bedrooms, pet policies, commute distances).
-   * **Tech Stack**: LangChain conversational memory, Structured Output parsing.
+    subgraph Legacy Systems
+        ClaimsDB[("Legacy Claims DB")]:::datastore
+        PolicyPDFs[("Policy PDF Storage")]:::datastore
+    end
 
-3. **Property Broker Agent (Tool Calling)**
-   * **Role**: Connects to property inventory databases to retrieve available accommodations.
-   * **Tech Stack**: Mosaic AI Agent Framework, Databricks SQL (querying Unity Catalog Delta tables containing aggregated inventory feeds).
+    subgraph Databricks - Data Layer
+        DLT["Delta Live Tables (Ingestion)"]:::datastore
+        UC_Claims[("claims.policies")]:::datastore
+        UC_Inventory[("accommodations.inventory")]:::datastore
+        UC_Volumes[("claims.policy_documents (Volumes)")]:::datastore
+        VectorIdx[("Vector Search Index")]:::datastore
+    end
 
-4. **Matching Orchestrator (The Coordinator)**
-   * **Role**: Coordinates the workflow between the Analyzer, Intake, and Broker agents. Calculates a suitability score for each property to ensure the best matches are presented.
+    subgraph Databricks - Agent Layer
+        Orchestrator["Matching Orchestrator (LangGraph)"]:::agent
+        Analyzer["Policy Analyzer (RAG)"]:::agent
+        Intake["Needs Intake (Conversational)"]:::agent
+        Broker["Property Broker (Tool Calling)"]:::agent
+        ModelServing["Mosaic AI Model Serving"]:::agent
+    end
 
-### Data Governance (Unity Catalog)
-* **Policies**: Raw PDF documents stored in UC Volumes; parsed text chunked and stored in Delta Tables synced to Vector Search.
-* **Inventory**: External property feeds ingested via Delta Live Tables (DLT) and stored as structured Delta Tables in UC.
+    subgraph External
+        Airbnb["Airbnb API"]:::external
+        Hotels["Hotel APIs"]:::external
+        CorpHousing["Corporate Housing API"]:::external
+        UserUI["Insured / Adjuster UI"]:::user
+    end
+
+    subgraph Observability
+        MLflow["MLflow Tracing & Evaluation"]:::monitoring
+    end
+
+    ClaimsDB -->|batch sync| DLT
+    PolicyPDFs -->|ingestion| UC_Volumes
+    DLT --> UC_Claims
+    DLT --> UC_Inventory
+    UC_Volumes -->|chunk & embed| VectorIdx
+
+    UserUI <--> Orchestrator
+    Orchestrator <--> Analyzer
+    Orchestrator <--> Intake
+    Orchestrator <--> Broker
+
+    Analyzer <--> VectorIdx
+    Analyzer <--> ModelServing
+    Intake <--> ModelServing
+    Broker <--> UC_Inventory
+    Broker <--> Airbnb
+    Broker <--> Hotels
+    Broker <--> CorpHousing
+
+    Orchestrator --> MLflow
+    Analyzer --> MLflow
+    Broker --> MLflow
+```
+
+### Agent Specifications
+
+#### 1. Policy Analyzer Agent (RAG)
+
+| Attribute | Detail |
+| :--- | :--- |
+| **Role** | Retrieves relevant sections from the insured's policy PDF and extracts structured financial constraints. |
+| **Pattern** | RAG (Retrieval-Augmented Generation) |
+| **Databricks Components** | Unity Catalog Volumes (PDF storage), Databricks Vector Search (retrieval), Mosaic AI Model Serving (LLM) |
+| **Input** | `policy_id` (string) |
+| **Output** | `PolicyConstraints` — total ALE limit, daily rate cap, max duration, LKQ flag, LKQ description |
+| **Core Logic** | 1. Retrieve top-k chunks from Vector Search matching "Additional Living Expenses" and "Loss of Use". 2. Prompt the LLM with retrieved context to extract structured fields. 3. Return validated `PolicyConstraints` object. |
+
+#### 2. Needs Intake Agent (Conversational)
+
+| Attribute | Detail |
+| :--- | :--- |
+| **Role** | Interviews the insured via chat to capture their specific accommodation requirements. |
+| **Pattern** | Conversational with structured output |
+| **Databricks Components** | Mosaic AI Model Serving (LLM with function calling) |
+| **Input** | Chat history (list of messages) |
+| **Output** | `UserNeeds` — bedrooms, pets, school district, accessibility, commute, special requests |
+| **Core Logic** | 1. Use a system prompt to guide empathetic, structured conversation. 2. Track which required fields are still missing. 3. Once all required fields are captured, output structured JSON via function calling. |
+
+#### 3. Property Broker Agent (Tool Calling)
+
+| Attribute | Detail |
+| :--- | :--- |
+| **Role** | Searches for available accommodation from internal inventory and external providers. |
+| **Pattern** | Tool-calling agent |
+| **Databricks Components** | Mosaic AI Agent Framework, Unity Catalog Functions (tools), Databricks SQL |
+| **Input** | `PolicyConstraints` + `UserNeeds` |
+| **Output** | List of `PropertyMatch` — property ID, address, bedrooms, pet policy, daily rate, provider |
+| **Tools** | `search_internal_inventory(location, beds, pet_friendly, max_daily_rate)` — UC Function querying `accommodations.inventory`. `search_external_api(provider, location, beds, pet_friendly, max_daily_rate)` — UC Function wrapping external API calls. |
+| **Core Logic** | 1. Convert needs and constraints into tool call parameters. 2. Execute internal and external searches in parallel. 3. Deduplicate and return combined results. |
+
+#### 4. Matching Orchestrator (Coordinator)
+
+| Attribute | Detail |
+| :--- | :--- |
+| **Role** | Coordinates the full workflow, applies hard filters, scores properties, and presents ranked results. |
+| **Pattern** | LangGraph orchestrator |
+| **Databricks Components** | Mosaic AI Agent Framework, Databricks Workflows (trigger) |
+| **Input** | `policy_id`, `claim_id`, chat session |
+| **Output** | Top 3 ranked `PropertyMatch` results |
+| **Core Logic** | 1. Dispatch Policy Analyzer and Needs Intake in parallel. 2. Pass combined constraints + needs to Property Broker. 3. **Hard filter**: Eliminate properties that violate constraints (over daily cap, insufficient bedrooms, not pet friendly when pets required). 4. **Score**: `suitability_score = (0.5 × need_match) + (0.3 × cost_efficiency) + (0.2 × lkq_match)`. 5. Return top 3 by score. |
+
+### Data Model (Unity Catalog)
+
+**Catalog**: `insurance_ai`
+
+#### Schema: `claims`
+
+**Table: `policies`**
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `policy_id` | STRING | Primary key |
+| `customer_id` | STRING | FK to customer |
+| `dwelling_coverage_usd` | DOUBLE | Coverage A amount |
+| `policy_document_path` | STRING | Path to PDF in UC Volumes |
+| `effective_date` | DATE | Policy start date |
+| `expiry_date` | DATE | Policy end date |
+
+**Table: `extracted_policy_constraints`**
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `policy_id` | STRING | FK to policies |
+| `total_ale_limit_usd` | DOUBLE | Max ALE budget |
+| `daily_limit_usd` | DOUBLE | Max daily accommodation rate |
+| `lkq_required` | BOOLEAN | LKQ constraint flag |
+| `lkq_description` | STRING | Free-text LKQ definition from policy |
+| `max_duration_months` | INT | Max temporary housing duration |
+| `extracted_at` | TIMESTAMP | When extraction was performed |
+
+#### Schema: `accommodations`
+
+**Table: `inventory`**
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `property_id` | STRING | Primary key |
+| `provider_name` | STRING | e.g., Airbnb, Corporate Housing |
+| `address` | STRING | Full property address |
+| `city` | STRING | City |
+| `state` | STRING | State |
+| `bedrooms` | INT | Number of bedrooms |
+| `bathrooms` | INT | Number of bathrooms |
+| `pet_friendly` | BOOLEAN | Accepts pets |
+| `daily_rate_usd` | DOUBLE | Current daily rate |
+| `available_from` | DATE | Start of availability |
+| `available_to` | DATE | End of availability |
+| `last_updated` | TIMESTAMP | Last inventory refresh |
+
+**Table: `match_results`**
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `match_id` | STRING | Primary key |
+| `claim_id` | STRING | FK to claim |
+| `policy_id` | STRING | FK to policy |
+| `property_id` | STRING | FK to inventory |
+| `suitability_score` | DOUBLE | Calculated score |
+| `status` | STRING | PROPOSED / APPROVED / BOOKED / REJECTED |
+| `created_at` | TIMESTAMP | When match was generated |
+
+### Legacy Integration Strategy
+
+| Legacy System | Integration Method | Databricks Target |
+| :--- | :--- | :--- |
+| Claims Database | Delta Live Tables (batch or streaming CDC) | `claims.policies` Delta table |
+| Policy PDF Storage | File ingestion pipeline | `claims.policy_documents` UC Volume |
+| Accommodation Provider Feeds | Scheduled API ingestion via Databricks Workflows | `accommodations.inventory` Delta table |
+
+### Agent Evaluation Plan
+
+Before deploying any agent to production, use **Mosaic AI Agent Evaluation** to validate quality:
+
+| Agent | Evaluation Approach |
+| :--- | :--- |
+| Policy Analyzer | Compare extracted constraints against manually labeled ground truth for 50+ policies. Measure field-level accuracy. |
+| Needs Intake | Validate that structured output correctly captures all stated needs from sample conversations. |
+| Property Broker | Verify that returned properties match the query parameters (no constraint violations in results). |
+| Matching Orchestrator | End-to-end test: given a policy + needs, verify top 3 results are valid, correctly scored, and ordered. |
+
+All evaluation metrics are tracked in **MLflow** for reproducibility.
